@@ -127,16 +127,20 @@ class AnalizadorCirculos:
         
         return self.imagen_con_circulos, self.circulos
     
-    def detectar_circulos_contornos(self, imagen=None, metodo=cv2.RETR_EXTERNAL, 
-                                   aprox=cv2.CHAIN_APPROX_SIMPLE, min_area=100):
+    def detectar_circulos_contornos(self, imagen=None, metodo=cv2.RETR_LIST, 
+                              aprox=cv2.CHAIN_APPROX_SIMPLE, min_area=50, 
+                              circularidad_min=0.6, invertir=False, debug=False):
         """
         Detecta círculos usando contornos.
         
         Args:
             imagen: Imagen binaria (si es None, usa la imagen binaria cargada)
-            metodo: Método de recuperación de contornos
+            metodo: Método de recuperación de contornos (RETR_LIST para detectar todos)
             aprox: Método de aproximación de contornos
             min_area: Área mínima de los círculos a detectar
+            circularidad_min: Umbral mínimo de circularidad (0-1, donde 1 es círculo perfecto)
+            invertir: Si es True, invierte la imagen binaria antes de buscar contornos
+            debug: Si es True, imprime información de depuración
             
         Returns:
             Tupla (imagen_con_contornos, circulos_detectados)
@@ -145,14 +149,39 @@ class AnalizadorCirculos:
             if not hasattr(self, 'imagen_binaria'):
                 if not hasattr(self, 'imagen_gris'):
                     self.imagen_gris = self.convertir_escala_grises()
-                _, self.imagen_binaria = cv2.threshold(self.imagen_gris, 127, 255, cv2.THRESH_BINARY)
+                # Usar umbral adaptativo en lugar de fijo
+                self.imagen_binaria = cv2.adaptiveThreshold(
+                    self.imagen_gris, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                    cv2.THRESH_BINARY, 11, 2
+                )
             imagen = self.imagen_binaria
-            
-        # Encontrar contornos
-        contornos, _ = cv2.findContours(imagen, metodo, aprox)
+    
+        # Asegurarnos de que la imagen sea binaria
+        if len(imagen.shape) > 2:
+            imagen = cv2.cvtColor(imagen, cv2.COLOR_BGR2GRAY)
+            _, imagen = cv2.threshold(imagen, 127, 255, cv2.THRESH_BINARY)
+    
+        # Opcionalmente invertir la imagen (útil cuando los círculos son blancos sobre fondo negro)
+        if invertir:
+            imagen = cv2.bitwise_not(imagen)
+        
+        # Aplicar operaciones morfológicas para mejorar la detección
+        kernel = np.ones((5, 5), np.uint8)
+        imagen = cv2.morphologyEx(imagen, cv2.MORPH_CLOSE, kernel, iterations=2)
+        imagen = cv2.morphologyEx(imagen, cv2.MORPH_OPEN, kernel, iterations=1)
+        
+        # Guardar la imagen binaria procesada para depuración
+        self.imagen_binaria_procesada = imagen.copy()
+        
+        # Encontrar contornos (la función findContours modifica la imagen de entrada)
+        imagen_contornos = imagen.copy()  
+        contornos, jerarquia = cv2.findContours(imagen_contornos, metodo, aprox)
+        
+        if debug:
+            print(f"Total de contornos encontrados: {len(contornos)}")
         
         # Crear una copia de la imagen original para dibujar
-        self.imagen_con_contornos = self.imagen_rgb.copy() if hasattr(self, 'imagen_rgb') else None
+        self.imagen_con_contornos = self.imagen_rgb.copy() if hasattr(self, 'imagen_rgb') else np.zeros((imagen.shape[0], imagen.shape[1], 3), dtype=np.uint8)
         
         # Limpiar métricas anteriores
         self.areas = []
@@ -162,7 +191,7 @@ class AnalizadorCirculos:
         # Filtrar contornos circulares
         self.circulos_contornos = []
         
-        for contorno in contornos:
+        for i, contorno in enumerate(contornos):
             # Calcular área y perímetro
             area = cv2.contourArea(contorno)
             
@@ -176,8 +205,11 @@ class AnalizadorCirculos:
             # Para un círculo perfecto, la circularidad es 1
             circularidad = 4 * np.pi * area / (perimetro ** 2) if perimetro > 0 else 0
             
+            if debug:
+                print(f"Contorno {i}: Área={area:.2f}, Perímetro={perimetro:.2f}, Circularidad={circularidad:.4f}")
+            
             # Filtrar por circularidad
-            if circularidad > 0.7:  # Umbral ajustable para detectar círculos
+            if circularidad > circularidad_min:
                 # Calcular centro y radio aproximado
                 (x, y), radio = cv2.minEnclosingCircle(contorno)
                 centro = (int(x), int(y))
@@ -194,9 +226,14 @@ class AnalizadorCirculos:
                 if self.imagen_con_contornos is not None:
                     cv2.circle(self.imagen_con_contornos, centro, radio, (0, 255, 0), 2)
                     cv2.circle(self.imagen_con_contornos, centro, 2, (255, 0, 0), 3)
+                    # Dibujar el contorno original para depuración
+                    cv2.drawContours(self.imagen_con_contornos, [contorno], 0, (255, 255, 0), 1)
+        
+        if debug:
+            print(f"Círculos detectados: {len(self.circulos_contornos)}")
         
         return self.imagen_con_contornos, self.circulos_contornos
-    
+
     def analizar_circulos(self):
         """
         Analiza los círculos detectados y calcula estadísticas.
@@ -274,12 +311,21 @@ class AnalizadorCirculos:
         # Convertir imagen filtrada a escala de grises
         imagen_filtrada_gris = self.convertir_escala_grises(imagen_filtrada)
         
-        # Binarizar imagen
-        _, imagen_binaria = cv2.threshold(imagen_filtrada_gris, 127, 255, cv2.THRESH_BINARY)
+        # Preprocesamiento específico según el método
+        if metodo_deteccion == 'hough':
+            # Para Hough: Binarización simple puede funcionar
+            _, imagen_binaria = cv2.threshold(imagen_filtrada_gris, 127, 255, cv2.THRESH_BINARY)
+        else:
+            # Para contornos: Usar umbral adaptativo para mejor segmentación
+            imagen_binaria = cv2.adaptiveThreshold(
+                imagen_filtrada_gris, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                cv2.THRESH_BINARY_INV, 11, 2
+            )
         
         # Aplicar operación morfológica para mejorar la detección
         kernel = np.ones((5, 5), np.uint8)
-        imagen_morfologica = cv2.morphologyEx(imagen_binaria, cv2.MORPH_CLOSE, kernel, iterations=1)
+        imagen_morfologica = cv2.morphologyEx(imagen_binaria, cv2.MORPH_CLOSE, kernel, iterations=2)
+        imagen_morfologica = cv2.morphologyEx(imagen_morfologica, cv2.MORPH_OPEN, kernel, iterations=1)
         
         # Detectar círculos según el método seleccionado
         if metodo_deteccion == 'hough':
@@ -293,9 +339,14 @@ class AnalizadorCirculos:
                 maxRadius=100
             )
         else:  # 'contornos'
+            # Intentar diferentes configuraciones para mejorar la detección
             imagen_resultado, circulos = self.detectar_circulos_contornos(
                 imagen=imagen_morfologica,
-                min_area=100
+                metodo=cv2.RETR_LIST,
+                min_area=50,
+                circularidad_min=0.6,
+                invertir=False,
+                debug=True  # Activar modo debug para ver información
             )
         
         # Guardar imágenes procesadas
@@ -306,6 +357,11 @@ class AnalizadorCirculos:
         self.guardar_imagen(cv2.cvtColor(imagen_filtrada, cv2.COLOR_BGR2RGB), f"{nombre_base}_filtrada.jpg")
         self.guardar_imagen(imagen_binaria, f"{nombre_base}_binaria.jpg")
         self.guardar_imagen(imagen_morfologica, f"{nombre_base}_morfologica.jpg")
+        
+        # También guardar la imagen binaria procesada si estamos usando contornos
+        if metodo_deteccion == 'contornos' and hasattr(self, 'imagen_binaria_procesada'):
+            self.guardar_imagen(self.imagen_binaria_procesada, f"{nombre_base}_binaria_procesada.jpg")
+        
         self.guardar_imagen(imagen_resultado, f"{nombre_base}_resultado.jpg")
         
         # Añadir resultados al DataFrame
@@ -518,10 +574,17 @@ class AnalizadorCirculos:
                 axs[1, 2].axis('off')
         
         # Mostrar información sobre círculos detectados
+        num_circulos = 0
         if metodo_deteccion == 'hough' and hasattr(self, 'circulos') and self.circulos is not None:
-            plt.figtext(0.5, 0.01, f"Círculos detectados: {len(self.circulos[0])}", ha='center')
+            num_circulos = len(self.circulos[0])
         elif metodo_deteccion == 'contornos' and hasattr(self, 'circulos_contornos') and self.circulos_contornos:
-            plt.figtext(0.5, 0.01, f"Círculos detectados: {len(self.circulos_contornos)}", ha='center')
+            num_circulos = len(self.circulos_contornos)
+        
+        info_texto = f"Círculos detectados: {num_circulos}"
+        if num_circulos > 0:
+            info_texto += f"\nRadio medio: {np.mean(self.radios):.2f}px"
+        
+        plt.figtext(0.5, 0.01, info_texto, ha='center')
         
         plt.tight_layout()
         

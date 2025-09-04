@@ -94,9 +94,36 @@ Implementa operaciones morfológicas para imágenes binarias:
 
 ### 4. Módulo de Análisis de Círculos (`analisis_circulos.py`)
 Contiene algoritmos para la detección y análisis de círculos:
-- Transformada de Hough
-- Detección por contornos
-- Análisis de propiedades (área, perímetro, radio)
+
+#### 4.1 Transformada de Hough para Círculos
+Implementa la función `HoughCircles` de OpenCV para detectar círculos en imágenes:
+- **Fundamento Matemático**: La transformada de Hough mapea puntos de la imagen a un espacio de parámetros tridimensional (centro_x, centro_y, radio).
+- **Proceso**:
+  1. Detección de bordes (típicamente con Canny)
+  2. Acumulación de votos en un espacio de parámetros 3D
+  3. Identificación de máximos locales como círculos
+- **Parámetros Clave**:
+  - `dp`: Ratio de resolución del acumulador respecto a la imagen
+  - `minDist`: Distancia mínima entre centros de círculos detectados
+  - `param1`: Umbral superior para el detector de bordes Canny
+  - `param2`: Umbral para detección de centros (menor valor = más círculos falsos)
+  - `minRadius/maxRadius`: Rango de radios a detectar
+
+#### 4.2 Detección por Contornos y Análisis de Forma
+Implementa un enfoque basado en contornos con análisis de circularidad:
+- **Fundamento Matemático**: Un círculo perfecto tiene una circularidad de 1.0 (4π × área / perímetro²)
+- **Proceso Mejorado**:
+  1. Preprocesamiento avanzado (ecualización, umbralización adaptativa)
+  2. Enfoque multi-umbral para combinar resultados de diferentes binarizaciones
+  3. Operaciones morfológicas para mejorar contornos (cierre para unir bordes)
+  4. Detección de contornos usando OpenCV
+  5. Filtrado por área mínima y circularidad
+  6. Recuperación de círculos parciales mediante umbrales adaptados
+  7. Eliminación de detecciones duplicadas
+- **Ventajas de la versión mejorada**:
+  - Mayor robustez ante variaciones de iluminación
+  - Mejor detección en imágenes con círculos parciales o superpuestos
+  - Capacidad para detectar círculos en diferentes condiciones de imagen
 
 ### 5. Módulo de Generación de Reportes (`generador_reportes.py`)
 Permite crear informes detallados en formato PDF:
@@ -119,6 +146,24 @@ Crea imágenes sintéticas para pruebas:
 5. **Documentación Automática**: Análisis comparativo de métodos y resultados
 6. **Estructura Modular**: Organización que facilita la extensibilidad y mantenimiento
 
+## Pipeline de Procesamiento de Imágenes
+
+El sistema implementa la siguiente secuencia de procesamiento para detectar círculos:
+
+1. **Carga de imagen**: Lectura del archivo y conversión a formato adecuado
+2. **Conversión a escala de grises**: Eliminación del canal de color para simplificar el análisis
+3. **Filtrado**: Aplicación de filtro Gaussiano para reducir ruido manteniendo bordes
+4. **Mejora de contraste**: Ecualización de histograma para normalizar la distribución de intensidades
+5. **Binarización**: 
+   - Para Hough: Umbralización simple
+   - Para Contornos: Umbralización adaptativa con múltiples valores (multi-umbral)
+6. **Operaciones morfológicas**: Aplicación de cierre seguido de apertura para:
+   - Conectar bordes parciales de círculos
+   - Eliminar pequeños ruidos y artefactos
+7. **Detección**: Aplicación del método seleccionado (Hough o Contornos)
+8. **Post-procesamiento**: Filtrado y validación de resultados
+9. **Análisis y cálculo de métricas**: Obtención de estadísticas sobre los círculos detectados
+
 ## Resultados
 
 El programa genera varios tipos de resultados:
@@ -135,7 +180,10 @@ El proyecto permite evaluar y comparar:
 
 1. **Eficacia de los Métodos de Detección**:
    - La transformada de Hough es más precisa pero más lenta
-   - El método de contornos es más eficiente pero requiere mejor preprocesamiento
+   - El método de contornos mejorado proporciona:
+     - Mayor robustez ante diferentes condiciones de iluminación
+     - Mejor detección en imágenes con círculos parciales
+     - Mayor eficiencia computacional para imágenes grandes
 
 2. **Efecto del Formato de Imagen**:
    - Los formatos sin pérdida preservan mejor los detalles
